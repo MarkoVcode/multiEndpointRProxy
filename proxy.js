@@ -1,71 +1,87 @@
-   // proxy.js
-   const express = require('express');
-   const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware'); // require('http-proxy-middleware');
+const TIMEOUT = 30 * 60 * 1000;
 
-   const {
-    debugProxyErrorsPlugin, // subscribe to proxy errors to prevent server from crashing
-    loggerPlugin, // log proxy events to a logger (ie. console)
-    errorResponsePlugin, // return 5xx response on proxy error
-    proxyEventsPlugin, // implements the "on:" option
-  } = require('http-proxy-middleware');
+const app = express();
+//app.use(express.json())
 
-   const app = express();
-   const targetUrl = 'https://www-vdeprodlivessr.luxgroup.net'; // Replace with your target endpoint
+app.use((req, res, next) => {
+    console.log('REQUEST--------------------------');
+    let url = `${req.method} ${req.url}`;
+    console.log(`Request: ${req.method} ${req.url}`);
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body)
+    next();
+});
 
-   // Middleware to log request details
-   app.use((req, res, next) => {
-       console.log('works here');
-       console.log(`Request: ${req.method} ${req.url}`);
-       console.log('Headers:', req.headers);
-       next();
-   });
+app.use('/baseurl', createCustomProxy('https://www-vdeprodlivessr.luxgroup.net', '/baseurl'));
+app.use('/searchurl', createCustomProxy('https://www-vdeprodlivessr.luxgroup.net', '/searchurl'));
+app.use('/graphql', createCustomProxy('https://preview-stageprodvisiondirect.luxgroup.net/graphql', '/graphql'));
 
-   // Proxy middleware
-   app.use('/baseurl', createProxyMiddleware({
-       target: targetUrl,
-       changeOrigin: true,
-       pathRewrite: {
-        '/baseurl': ''
-       },
-       plugins: [debugProxyErrorsPlugin, loggerPlugin, errorResponsePlugin, proxyEventsPlugin],
-       logger: console,
-      // selfHandleResponse: true,
-       logLevel: 'info',
-    //    on: {
-    //     proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
-    //       //res.statusCode = 418; // set different response status code
-    //       console.log("interceptor")
-    //       const response = responseBuffer.toString('utf8');
-    //       return
-    //       // response.replaceAll('Example', 'Teapot');
-    //     })},
-       on: {
-         ProxyRes: (proxyRes, req, res) => {
-           console.log("prox request");
-           let body = [];
-           proxyRes.on('data', chunk => {
-               console.log("prox request 2");
-               body.push(chunk);
-           });
-           proxyRes.on('end', () => {
-               console.log("prox request 3");
-               body = Buffer.concat(body).toString();
-               console.log(`Response from ${targetUrl}:`);
-               console.log('Status:', proxyRes.statusCode);
-               console.log('Headers:', proxyRes.headers);
-               console.log('Body:', body);
-           });
-      }}
-   }
-   ));
+function saveJsonToRandomFile(ppath, jsonData) {
+    const jsonString = JSON.stringify(jsonData, null, 2);
+    const strippedPath = ppath.substring(1);
+    const randomFileName = `data_${strippedPath}_${Date.now()}_${Math.floor(Math.random() * 1000)}.json`;
+    fs.writeFile(path.join(__dirname, randomFileName), jsonString, (err) => {
+        if (err) {
+            console.error('Error writing file', err);
+        } else {
+            console.log(`File '${randomFileName}' has been created with JSON content`);
+        }
+    });
+}
 
-   app.get('/test', (req,res) => {
-    console.log('test route');
-    res.send('works');
-   });
+function appendToFile(fileName, domain, uri) {
+    let content;
+    if (!uri.startsWith('http')) {
+        content = `${domain}${uri}`;
+    } else {
+        content = domain;
+    }
+    const filePath = path.join(__dirname, fileName);
+    fs.appendFile(filePath, content + '\n', (err) => {
+        if (err) {
+            console.error('Error appending to the file', err);
+        } else {
+            console.log(`Content appended to '${fileName}' successfully!`);
+        }
+    });
+}
 
-   // Start the server
-   const PORT = 3000;
-   app.listen(PORT, () => {
-       console.log(`Proxy server is running on http://localhost:${PORT}`);
-   });
+function createCustomProxy(targetUrl, path) {
+    let pathRewriteRule = "";
+    if (path === '/graphql') {
+        pathRewriteRule = "/graphql";
+    }
+    return createProxyMiddleware({
+        target: targetUrl,
+        // pathRewrite: {
+        //     [`^${path}`]: pathRewriteRule,
+        // },
+        // proxyTimeout: TIMEOUT,
+        // timeout: TIMEOUT,
+        changeOrigin: true,
+        selfHandleResponse: true,
+        on: {
+            proxyRes: responseInterceptor(async (buffer, proxyRes, req, res) => {
+                console.log(`RESPONSE--------------------------`);
+                console.log('Status:', res.statusCode);
+                console.log('Headers:', res.getHeaders());
+                let url = req.url;
+                appendToFile('data_urls.txt', targetUrl, url);
+                data = buffer.toString('utf8');
+                //console.log('Body:', data);
+                saveJsonToRandomFile(path, JSON.parse(data));
+                return buffer.toString('utf8');
+            }),
+        },
+        logger: console,
+    });
+}
+// Start the server
+const PORT = 3000;
+app.listen(PORT, () => {
+    console.log(`Proxy server is running on http://localhost:${PORT}`);
+});

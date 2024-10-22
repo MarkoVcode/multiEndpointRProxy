@@ -1,8 +1,13 @@
 const express = require('express');
 const fs = require('fs');
+const yargs = require('yargs');
 const path = require('path');
 const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware'); // require('http-proxy-middleware');
 const TIMEOUT = 30 * 60 * 1000;
+
+// Create output directory with timestamp
+const outputDir = `output_${Date.now()}`;
+fs.mkdirSync(outputDir);
 
 const app = express();
 //app.use(express.json())
@@ -13,18 +18,34 @@ app.use((req, res, next) => {
     console.log(`Request: ${req.method} ${req.url}`);
     console.log('Headers:', req.headers);
     console.log('Body:', req.body)
-    next();
+    next(); 
 });
 
-app.use('/baseurl', createCustomProxy('https://www-vdeprodlivessr.luxgroup.net', '/baseurl'));
-app.use('/searchurl', createCustomProxy('https://www-vdeprodlivessr.luxgroup.net', '/searchurl'));
-app.use('/graphql', createCustomProxy('https://preview-stageprodvisiondirect.luxgroup.net/graphql', '/graphql'));
+const proxyConfig = require('./data/proxyConfig.json');
+const argv = yargs.argv;
+const selectedConfig = argv._[0];
+
+if (!selectedConfig || !proxyConfig.hasOwnProperty(selectedConfig)) {
+  console.error(`Error: Invalid or missing configuration. Please provide a valid configuration name.`);
+  console.error(`Available configurations: ${Object.keys(proxyConfig).join(', ')}`);
+  process.exit(1);
+}
+
+const config = proxyConfig[selectedConfig];
+app.use('/baseurl', createCustomProxy(config.baseurl, '/baseurl'));
+app.use('/searchurl', createCustomProxy(config.searchurl, '/searchurl'));
+app.use('/graphql', createCustomProxy(config.graphql, '/graphql'));
+
+console.log(`Proxy configured for: ${selectedConfig}`);
+console.log(`Base URL: ${config.baseurl}`);
+console.log(`Search URL: ${config.searchurl}`);
+console.log(`GraphQL URL: ${config.graphql}`);
 
 function saveJsonToRandomFile(ppath, jsonData) {
     const jsonString = JSON.stringify(jsonData, null, 2);
     const strippedPath = ppath.substring(1);
     const randomFileName = `data_${strippedPath}_${Date.now()}_${Math.floor(Math.random() * 1000)}.json`;
-    fs.writeFile(path.join(__dirname, randomFileName), jsonString, (err) => {
+    fs.writeFile(path.join(__dirname, outputDir, randomFileName), jsonString, (err) => {
         if (err) {
             console.error('Error writing file', err);
         } else {
@@ -40,7 +61,7 @@ function appendToFile(fileName, domain, uri) {
     } else {
         content = domain;
     }
-    const filePath = path.join(__dirname, fileName);
+    const filePath = path.join(__dirname, outputDir, fileName);
     fs.appendFile(filePath, content + '\n', (err) => {
         if (err) {
             console.error('Error appending to the file', err);
@@ -84,4 +105,5 @@ function createCustomProxy(targetUrl, path) {
 const PORT = 3000;
 app.listen(PORT, () => {
     console.log(`Proxy server is running on http://localhost:${PORT}`);
+    console.log(`Output directory created: ${outputDir}`);
 });
